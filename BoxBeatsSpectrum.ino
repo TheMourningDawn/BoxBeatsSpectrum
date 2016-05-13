@@ -238,7 +238,7 @@ void equalizerShelf(CRGBSet shelf, int frequencyBin, int sensitivity, bool direc
             shelf(LEDS_PER_SHELF - numberToLight - 1, LEDS_PER_SHELF-1) = color;
         } else {
             shelf(0, numberToLight) = color;
-        }
+
     }
 }
 
