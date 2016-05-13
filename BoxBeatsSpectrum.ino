@@ -4,14 +4,14 @@
 
 FASTLED_USING_NAMESPACE
 
-#define BORDER_LED_PIN    6
-#define SHELF_LED_PIN    3
+#define BORDER_LED_PIN 6
+#define SHELF_LED_PIN 3
 #define STROBE_PIN 4
 #define RESET_PIN 5
 #define LEFT_EQ_PIN A0
 #define RIGHT_EQ_PIN A1
 
-#define LED_TYPE    WS2811
+#define LED_TYPE WS2811
 #define COLOR_ORDER GRB
 
 #define NUM_SHELF_LEDS 60
@@ -19,16 +19,20 @@ FASTLED_USING_NAMESPACE
 #define NUM_BORDER_LEDS 147
 #define NUM_TOTAL_LEDS NUM_BORDER_LEDS + NUM_SHELF_LEDS
 
-#define BRIGHTNESS         120
-#define FRAMES_PER_SECOND  240
+#define BRIGHTNESS 120
+#define FRAMES_PER_SECOND 240
 
 #define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
 
-CRGB borderLeds[NUM_BORDER_LEDS];
-CRGB allShelves[NUM_SHELF_LEDS];
-CRGB* bottomShelfLeds = allShelves + 0;
-CRGB* middleShelfLeds = allShelves + LEDS_PER_SHELF;
-CRGB* topShelfLeds = allShelves + 2 * LEDS_PER_SHELF;
+CRGBArray<NUM_BORDER_LEDS> borderLeds;
+CRGBArray<NUM_SHELF_LEDS> allShelves;
+
+CRGB *topShelfLedArray = allShelves + 2 * LEDS_PER_SHELF;
+CRGB *middleShelfLedArray = allShelves + LEDS_PER_SHELF;
+CRGB *bottomShelfLedArray = allShelves + 0;
+CRGBSet topShelfLeds(topShelfLedArray, LEDS_PER_SHELF);
+CRGBSet middleShelfLeds(middleShelfLedArray, LEDS_PER_SHELF);
+CRGBSet bottomShelfLeds(bottomShelfLedArray, LEDS_PER_SHELF);
 
 int frequenciesLeft[7];
 int frequenciesRight[7];
@@ -44,16 +48,16 @@ void setup() {
 
     pinMode(RESET_PIN, OUTPUT); // reset
     pinMode(STROBE_PIN, OUTPUT); // strobe
-    digitalWrite(RESET_PIN,LOW); // reset low
-    digitalWrite(STROBE_PIN,HIGH); //pin 5 is RESET on the shield
+    digitalWrite(RESET_PIN, LOW); // reset low
+    digitalWrite(STROBE_PIN, HIGH); //pin 5 is RESET on the shield
 }
 
-/*******FOR THE LOVE OF GOD, WHY DOES THIS ONLY WORK WHEN ITS AFTER THE SETUP!!********/
+/*******FOR THE LOVE OF GOD, WHY DOES THIS ONLY WORK WHEN ITS AFTER THE SETUP!?!********/
 // List of patterns to cycle through.
 typedef void (*SimplePatternList[])();
 
-//SimplePatternList patterns = {rainbow, confetti, sinelon, juggle, flowEqualizer, bpm};
-SimplePatternList patterns = {waterfall};
+// SimplePatternList patterns = {rainbow, confetti, sinelon, juggle, flowEqualizer, bpm};
+SimplePatternList patterns = {equalizerRightToLeftBottomToTop, equalizerLeftToRightBottomToTop};
 
 void loop() {
     readFrequencies();
@@ -71,15 +75,15 @@ void nextPattern() {
     currentPatternNumber = (currentPatternNumber + 1) % ARRAY_SIZE(patterns);
 }
 
-void readFrequencies(){
-    //reset the data
+void readFrequencies() {
+    // reset the data
     digitalWrite(RESET_PIN, HIGH);
     digitalWrite(RESET_PIN, LOW);
 
-    //loop through all 7 bands
-    for(int band=0; band < 7; band++) {
+    // loop through all 7 bands
+    for (int band = 0; band < 7; band++) {
         digitalWrite(STROBE_PIN, LOW); // go to the next band
-        delayMicroseconds(50); //gather some data
+        delayMicroseconds(50); // gather some data
         frequenciesLeft[band] = analogRead(LEFT_EQ_PIN); // store left band reading
         frequenciesRight[band] = analogRead(RIGHT_EQ_PIN); // store right band reading
         digitalWrite(STROBE_PIN, HIGH); // reset the strobe pin
@@ -87,7 +91,7 @@ void readFrequencies(){
 }
 
 void rainbow() {
-    if(frequenciesLeft[2] > 600) {
+    if (frequenciesLeft[2] > 600) {
         fill_rainbow(borderLeds, NUM_BORDER_LEDS, hueCounter, 7);
     }
 }
@@ -97,7 +101,7 @@ void confetti() {
     fadeToBlackBy(borderLeds, NUM_BORDER_LEDS, 10);
     uint8_t pos = random16(NUM_BORDER_LEDS);
 
-    if(frequenciesLeft[0] > 600) {
+    if (frequenciesLeft[0] > 600) {
         borderLeds[pos] += CHSV(hueCounter + random8(64), 200, 255);
     }
 }
@@ -106,7 +110,7 @@ void confetti() {
 void sinelon() {
     fadeToBlackBy(borderLeds, NUM_BORDER_LEDS, 20);
     int pos = beatsin16(13, 0, NUM_BORDER_LEDS);
-    if(frequenciesLeft[3] > 600) {
+    if (frequenciesLeft[3] > 600) {
         borderLeds[pos] += CHSV(hueCounter, 255, 192);
     }
 }
@@ -125,35 +129,12 @@ void bpm() {
 void juggle() {
     fadeToBlackBy(borderLeds, NUM_BORDER_LEDS, 20);
     byte dothue = 0;
-    if(frequenciesLeft[1] > 600) {
+    if (frequenciesLeft[1] > 600) {
         for (int i = 0; i < 8; i++) {
             borderLeds[beatsin16(i + 7, 0, NUM_BORDER_LEDS)] |= CHSV(dothue, 200, 255);
             dothue += 32;
         }
     }
-}
-
-void waterfallShelf(CRGB shelf[], int spectrum, int threashold) {
-    if(frequenciesLeft[spectrum] > threashold) {
-        Serial.println(map(frequenciesLeft[spectrum], 500, 1023, 0, 255));
-        shelf[LEDS_PER_SHELF/2] = CHSV(map(frequenciesLeft[spectrum], 500, 1023, 0, 255), 200, 255);
-        shelf[LEDS_PER_SHELF/2 + 1] = CHSV(map(frequenciesLeft[spectrum], 500, 1023, 0, 255), 200, 255);
-    } else {
-        shelf[LEDS_PER_SHELF/2] = CRGB(0,0,0);
-        shelf[LEDS_PER_SHELF/2 + 1] = CRGB(0,0,0);
-    }
-    memmove( &shelf[0], &shelf[1], LEDS_PER_SHELF/2 * sizeof(CRGB) );
-    memmove( &shelf[LEDS_PER_SHELF/2], &shelf[LEDS_PER_SHELF/2 - 1], LEDS_PER_SHELF/2 * sizeof(CRGB) );
-}
-
-void waterfallBorder(int spectrum) {
-    if(frequenciesRight[1] > 500) {
-        borderLeds[NUM_BORDER_LEDS/2] = CHSV(map(frequenciesRight[spectrum], 500, 1023, 0, 255), 200, 255);
-    }  else {
-        borderLeds[NUM_BORDER_LEDS / 2] = CRGB(0, 0, 0);
-    }
-    memmove( &borderLeds[0], &borderLeds[1], NUM_BORDER_LEDS/2 * sizeof(CRGB) );
-    memmove( &borderLeds[NUM_BORDER_LEDS/2], &borderLeds[NUM_BORDER_LEDS/2 - 1], NUM_BORDER_LEDS/2 * sizeof(CRGB) );
 }
 
 void waterfall() {
@@ -162,4 +143,105 @@ void waterfall() {
     waterfallShelf(bottomShelfLeds, 0, 500);
     waterfallBorder(4);
 }
+
+void waterfallShelf(CRGB shelf[], int spectrum, int threashold) {
+    if (frequenciesLeft[spectrum] > threashold) {
+        Serial.println(map(frequenciesLeft[spectrum], 500, 1023, 0, 255));
+        shelf[LEDS_PER_SHELF / 2] = CHSV(map(frequenciesLeft[spectrum], 500, 1023, 0, 255), 200, 255);
+        shelf[LEDS_PER_SHELF / 2 + 1] = CHSV(map(frequenciesLeft[spectrum], 500, 1023, 0, 255), 200, 255);
+    } else {
+        shelf[LEDS_PER_SHELF / 2] = CRGB(0, 0, 0);
+        shelf[LEDS_PER_SHELF / 2 + 1] = CRGB(0, 0, 0);
+    }
+    memmove(&shelf[0], &shelf[1], LEDS_PER_SHELF / 2 * sizeof(CRGB));
+    memmove(&shelf[LEDS_PER_SHELF / 2], &shelf[LEDS_PER_SHELF / 2 - 1], LEDS_PER_SHELF / 2 * sizeof(CRGB));
+}
+
+void waterfallBorder(int spectrum) {
+    if (frequenciesRight[1] > 500) {
+        borderLeds[NUM_BORDER_LEDS / 2] = CHSV(map(frequenciesRight[spectrum], 500, 1023, 0, 255), 200, 255);
+    } else {
+        borderLeds[NUM_BORDER_LEDS / 2] = CRGB(0, 0, 0);
+    }
+    memmove(&borderLeds[0], &borderLeds[1], NUM_BORDER_LEDS / 2 * sizeof(CRGB));
+    memmove(&borderLeds[NUM_BORDER_LEDS / 2], &borderLeds[NUM_BORDER_LEDS / 2 - 1], NUM_BORDER_LEDS / 2 * sizeof(CRGB));
+}
+
+void equalizerLeftToRightBottomToTop() {
+    equalizerLeftBorder(0, 200, false);
+    equalizerRightBorder(6, 200, false);
+    equalizerTopBorder(5, 400, true);
+    equalizerShelf(topShelfLeds, 4, 400, false);
+    equalizerShelf(middleShelfLeds, 3, 400, true);
+    equalizerShelf(bottomShelfLeds, 2, 400, false);
+}
+
+void equalizerRightToLeftBottomToTop() {
+    equalizerLeftBorder(0, 200, false);
+    equalizerRightBorder(6, 200, false);
+    equalizerTopBorder(5, 400, false);
+    equalizerShelf(topShelfLeds, 4, 400, true);
+    equalizerShelf(middleShelfLeds, 3, 400, false);
+    equalizerShelf(bottomShelfLeds, 2, 400, true);
+}
+
+void equalizerLeftBorder(int frequencyBin, int sensitivity, bool direction) {
+    int ledsInSection = 62;
+    borderLeds(0, ledsInSection).fadeToBlackBy(40);
+    if (frequenciesLeft[frequencyBin] > sensitivity) {
+        int numberToLight = map(frequenciesLeft[frequencyBin], sensitivity, 1023, 0, ledsInSection);
+        CRGB color = CHSV(map(frequenciesLeft[frequencyBin], sensitivity, 1023, 0, 255), 200, 255);
+        if (direction == true) {
+            borderLeds(ledsInSection - numberToLight, ledsInSection);
+        } else {
+            borderLeds(0, numberToLight) = color;
+        }
+    }
+}
+
+void equalizerRightBorder(int frequencyBin, int sensitivity, bool direction) {
+    int ledsInSection = 62;
+    int locationOffset = 84;
+    borderLeds(locationOffset, ledsInSection + locationOffset).fadeToBlackBy(40);
+    if (frequenciesLeft[frequencyBin] > sensitivity) {
+        int numberToLight = map(frequenciesLeft[frequencyBin], sensitivity, 1023, 0, ledsInSection);
+        CRGB color = CHSV(map(frequenciesLeft[frequencyBin], sensitivity, 1023, 0, 255), 200, 255);
+        if (direction == true) {
+            borderLeds(locationOffset, locationOffset + numberToLight) = color;
+        } else {
+            borderLeds(locationOffset + ledsInSection - numberToLight, locationOffset + ledsInSection) = color;
+        }
+    }
+}
+
+void equalizerTopBorder(int frequencyBin, int sensitivity, bool direction) {
+    int ledsInSection = 20;
+    int locationOffset = 63;
+    borderLeds(locationOffset, ledsInSection + locationOffset).fadeToBlackBy(45);
+    if (frequenciesLeft[frequencyBin] > sensitivity) {
+        int numberToLight = map(frequenciesLeft[frequencyBin], sensitivity, 1023, 0, ledsInSection);
+        CRGB color = CHSV(map(frequenciesLeft[frequencyBin], sensitivity, 1023, 0, 255), 200, 255);
+        if (direction == true) {
+            borderLeds(locationOffset, locationOffset + numberToLight) = color;
+        } else {
+            borderLeds(locationOffset + ledsInSection - numberToLight, locationOffset + ledsInSection) = color;
+        }
+    }
+}
+
+void equalizerShelf(CRGBSet shelf, int frequencyBin, int sensitivity, bool direction) {
+    fadeToBlackBy(shelf, LEDS_PER_SHELF, 45);
+    if (frequenciesLeft[frequencyBin] > sensitivity) {
+        int numberToLight = map(frequenciesLeft[frequencyBin], sensitivity, 1023, 0, LEDS_PER_SHELF);
+        CRGB color = CHSV(map(frequenciesLeft[frequencyBin], sensitivity, 1023, 0, 255), 200, 255);
+        if(direction == true) {
+            shelf(LEDS_PER_SHELF - numberToLight - 1, LEDS_PER_SHELF-1) = color;
+        } else {
+            shelf(0, numberToLight) = color;
+        }
+    }
+}
+
+
+
 
