@@ -1,6 +1,8 @@
 #include <FastLED.h>
 #include <Wire.h>
 #include <avr/pgmspace.h>
+#include "ClickEncoder.h"
+#include "TimerOne.h"
 
 FASTLED_USING_NAMESPACE
 
@@ -10,6 +12,10 @@ FASTLED_USING_NAMESPACE
 #define RESET_PIN 5
 #define LEFT_EQ_PIN A0
 #define RIGHT_EQ_PIN A1
+
+#define PIN_ENCODER_A 0
+#define PIN_ENCODER_B 1
+#define PIN_ENCODER_SWITCH 10
 
 #define LED_TYPE WS2811
 #define COLOR_ORDER GRB
@@ -23,7 +29,6 @@ FASTLED_USING_NAMESPACE
 #define FRAMES_PER_SECOND 240
 
 #define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
-
 CRGBArray<NUM_BORDER_LEDS> borderLeds;
 CRGBArray<NUM_SHELF_LEDS> allShelves;
 
@@ -34,13 +39,21 @@ CRGBSet topShelfLeds(topShelfLedArray, LEDS_PER_SHELF);
 CRGBSet middleShelfLeds(middleShelfLedArray, LEDS_PER_SHELF);
 CRGBSet bottomShelfLeds(bottomShelfLedArray, LEDS_PER_SHELF);
 
+ClickEncoder *encoder;
+int16_t previousEncoderValue, currentEncoderValue;
+
 int frequenciesLeft[7];
 int frequenciesRight[7];
 
 uint8_t currentPatternNumber = 0; // Index number of which pattern is current
 uint8_t hueCounter = 0; // rotating "base color" used by many of the patterns
 
+void timerIsr() {
+    encoder->service();
+}
+
 void setup() {
+    Serial.begin(9600);
     FastLED.addLeds<LED_TYPE, BORDER_LED_PIN, COLOR_ORDER>(borderLeds, NUM_BORDER_LEDS).setCorrection(TypicalLEDStrip);
     FastLED.addLeds<LED_TYPE, SHELF_LED_PIN, COLOR_ORDER>(allShelves, NUM_SHELF_LEDS).setCorrection(TypicalLEDStrip);
 
@@ -50,16 +63,38 @@ void setup() {
     pinMode(STROBE_PIN, OUTPUT); // strobe
     digitalWrite(RESET_PIN, LOW); // reset low
     digitalWrite(STROBE_PIN, HIGH); //pin 5 is RESET on the shield
+
+    //Initialize the encoder (knob)
+    encoder = new ClickEncoder(0, 1, 10, 4, false);
+    Timer1.initialize(1000);
+    Timer1.attachInterrupt(timerIsr);
+
+    previousEncoderValue = 0;
 }
 
 /*******FOR THE LOVE OF GOD, WHY DOES THIS ONLY WORK WHEN ITS AFTER THE SETUP!?!********/
 // List of patterns to cycle through.
 typedef void (*SimplePatternList[])();
 
-// SimplePatternList patterns = {rainbow, confetti, sinelon, juggle, flowEqualizer, bpm};
-SimplePatternList patterns = {equalizerRightToLeftBottomToTop, equalizerLeftToRightBottomToTop};
+SimplePatternList patterns = {waterfall, equalizerRightToLeftBottomToTop, equalizerLeftToRightBottomToTop, rainbow, confetti, sinelon, juggle, bpm};
 
 void loop() {
+    currentEncoderValue += encoder->getValue();
+    ClickEncoder::Button b = encoder->getButton();
+
+    if (b == ClickEncoder::Open) {
+        if (currentEncoderValue != previousEncoderValue) {
+            if(currentEncoderValue < previousEncoderValue) {
+                Serial.println("Next pattern");
+                nextPattern();
+            } else {
+                Serial.println("Previous pattern");
+                previousPattern();
+            }
+            previousEncoderValue = currentEncoderValue;
+        }
+    }
+
     readFrequencies();
 
     patterns[currentPatternNumber]();
@@ -67,12 +102,17 @@ void loop() {
     FastLED.show();
     FastLED.delay(1000 / FRAMES_PER_SECOND);
 
-    EVERY_N_MILLISECONDS(20) { hueCounter++; } // slowly cycle the "base color" through the rainbow
-    EVERY_N_SECONDS(15) { nextPattern(); } // change patterns periodically
+    EVERY_N_MILLISECONDS(20){ hueCounter++; } // slowly cycle the "base color" through the rainbow
+//    EVERY_N_SECONDS(15)
+//    { nextPattern(); } // change patterns periodically
 }
 
 void nextPattern() {
     currentPatternNumber = (currentPatternNumber + 1) % ARRAY_SIZE(patterns);
+}
+
+void previousPattern() {
+    currentPatternNumber = (currentPatternNumber - 1) % ARRAY_SIZE(patterns);
 }
 
 void readFrequencies() {
@@ -146,7 +186,6 @@ void waterfall() {
 
 void waterfallShelf(CRGB shelf[], int spectrum, int threashold) {
     if (frequenciesLeft[spectrum] > threashold) {
-        Serial.println(map(frequenciesLeft[spectrum], 500, 1023, 0, 255));
         shelf[LEDS_PER_SHELF / 2] = CHSV(map(frequenciesLeft[spectrum], 500, 1023, 0, 255), 200, 255);
         shelf[LEDS_PER_SHELF / 2 + 1] = CHSV(map(frequenciesLeft[spectrum], 500, 1023, 0, 255), 200, 255);
     } else {
@@ -234,11 +273,12 @@ void equalizerShelf(CRGBSet shelf, int frequencyBin, int sensitivity, bool direc
     if (frequenciesLeft[frequencyBin] > sensitivity) {
         int numberToLight = map(frequenciesLeft[frequencyBin], sensitivity, 1023, 0, LEDS_PER_SHELF);
         CRGB color = CHSV(map(frequenciesLeft[frequencyBin], sensitivity, 1023, 0, 255), 200, 255);
-        if(direction == true) {
-            shelf(LEDS_PER_SHELF - numberToLight - 1, LEDS_PER_SHELF-1) = color;
+        if (direction == true) {
+            shelf(LEDS_PER_SHELF - numberToLight - 1, LEDS_PER_SHELF - 1) = color;
         } else {
             shelf(0, numberToLight) = color;
 
+        }
     }
 }
 
