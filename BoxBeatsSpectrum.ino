@@ -1,3 +1,5 @@
+//TODO:Implement some sort of sensitivity selection mode
+//TODO:Fix all of the modes broken by the change in led strip setup
 #include <FastLED.h>
 #include <Wire.h>
 #include <avr/pgmspace.h>
@@ -29,6 +31,7 @@ FASTLED_USING_NAMESPACE
 #define FRAMES_PER_SECOND 240
 
 #define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
+
 CRGBArray<NUM_BORDER_LEDS> borderLeds;
 CRGBArray<NUM_SHELF_LEDS> allShelves;
 
@@ -39,14 +42,15 @@ CRGBSet topShelfLeds(topShelfLedArray, LEDS_PER_SHELF);
 CRGBSet middleShelfLeds(middleShelfLedArray, LEDS_PER_SHELF);
 CRGBSet bottomShelfLeds(bottomShelfLedArray, LEDS_PER_SHELF);
 
-ClickEncoder *encoder;
-int16_t previousEncoderValue, currentEncoderValue;
-
 int frequenciesLeft[7];
 int frequenciesRight[7];
 
-uint8_t currentPatternNumber = 0; // Index number of which pattern is current
-uint8_t hueCounter = 0; // rotating "base color" used by many of the patterns
+int currentGlobalSensitivity = 0;
+ClickEncoder *encoder;
+int16_t previousEncoderValue, currentEncoderValue;
+uint8_t currentPattern = 0;
+uint8_t currentSelectionMode = 0;
+uint8_t hueCounter = 0;
 
 void timerIsr() {
     encoder->service();
@@ -76,46 +80,94 @@ void setup() {
 // List of patterns to cycle through.
 typedef void (*SimplePatternList[])();
 
-SimplePatternList patterns = {waterfall, equalizerRightToLeftBottomToTop, equalizerLeftToRightBottomToTop, rainbow, confetti, sinelon, juggle, bpm};
+SimplePatternList patterns = {waterfall, confetti, equalizerRightToLeftBottomToTop, equalizerLeftToRightBottomToTop, rainbow, sinelon, juggle, bpm};
 
 void loop() {
-    currentEncoderValue += encoder->getValue();
-    ClickEncoder::Button b = encoder->getButton();
+    checkRotaryEncoderForInput();
 
-    if (b == ClickEncoder::Open) {
-        if (currentEncoderValue != previousEncoderValue) {
-            if(currentEncoderValue < previousEncoderValue) {
-                Serial.println("Next pattern");
-                nextPattern();
-            } else {
-                Serial.println("Previous pattern");
-                previousPattern();
-            }
-            previousEncoderValue = currentEncoderValue;
-        }
-    }
+    readAudioFrequencies();
 
-    readFrequencies();
-
-    patterns[currentPatternNumber]();
+    patterns[currentPattern]();
 
     FastLED.show();
     FastLED.delay(1000 / FRAMES_PER_SECOND);
 
-    EVERY_N_MILLISECONDS(20){ hueCounter++; } // slowly cycle the "base color" through the rainbow
-//    EVERY_N_SECONDS(15)
-//    { nextPattern(); } // change patterns periodically
+    EVERY_N_MILLISECONDS(20)
+    { hueCounter++; } // slowly cycle the "base color" through the rainbow
+//    EVERY_N_SECONDS(15) { nextPattern(); } // change patterns periodically
+}
+
+void checkRotaryEncoderForInput() {
+    currentEncoderValue += encoder->getValue();
+    ClickEncoder::Button b = encoder->getButton();
+    if (b != ClickEncoder::Open) {
+        switch (b) {
+            case ClickEncoder::Clicked:
+                currentSelectionMode = wrapToRange(currentSelectionMode+1,0,1);
+                break;
+            case ClickEncoder::DoubleClicked:
+                encoder->setAccelerationEnabled(!encoder->getAccelerationEnabled());
+                Serial.print("Acceleration ");
+                Serial.println(encoder->getAccelerationEnabled());
+                break;
+            case ClickEncoder::Released:
+                Serial.println("Released");
+                break;
+            default:;
+        }
+    }
+
+    if (b == ClickEncoder::Open) {
+        if (currentEncoderValue != previousEncoderValue) {
+            if(currentSelectionMode == 0) {
+                if (currentEncoderValue < previousEncoderValue) {
+                    nextPattern();
+                } else {
+                    previousPattern();
+                }
+            } else if(currentSelectionMode == 1) {
+                if (currentEncoderValue < previousEncoderValue) {
+                    currentGlobalSensitivity+=50;
+                } else {
+                    currentGlobalSensitivity-=50;
+                }
+            }
+            previousEncoderValue = currentEncoderValue;
+        }
+    }
 }
 
 void nextPattern() {
-    currentPatternNumber = (currentPatternNumber + 1) % ARRAY_SIZE(patterns);
+    currentPattern = (currentPattern + 1) % ARRAY_SIZE(patterns);
 }
 
 void previousPattern() {
-    currentPatternNumber = (currentPatternNumber - 1) % ARRAY_SIZE(patterns);
+    currentPattern = (currentPattern - 1) % ARRAY_SIZE(patterns);
 }
 
-void readFrequencies() {
+int clampToRange(int numberToClamp, int lowerBound, int upperBound) {
+    if(numberToClamp > upperBound) {
+        return upperBound;
+    } else if(numberToClamp < lowerBound) {
+        return lowerBound;
+    }
+    return numberToClamp;
+}
+
+int clampSensitivity(int sensitivity) {
+    return clampToRange(sensitivity,0,1023);
+}
+
+int wrapToRange(int numberToWrap, int lowerBound, int upperBound) {
+    if(numberToWrap > upperBound) {
+        return numberToWrap%upperBound;
+    } else if(numberToWrap < lowerBound) {
+        return numberToWrap+=upperBound;
+    }
+    return numberToWrap;
+}
+
+void readAudioFrequencies() {
     // reset the data
     digitalWrite(RESET_PIN, HIGH);
     digitalWrite(RESET_PIN, LOW);
@@ -132,26 +184,36 @@ void readFrequencies() {
 
 void rainbow() {
     if (frequenciesLeft[2] > 600) {
-        fill_rainbow(borderLeds, NUM_BORDER_LEDS, hueCounter, 7);
+        fill_rainbow(borderLeds, NUM_TOTAL_LEDS, hueCounter, 7);
     }
 }
 
 // random colored speckles that blink in and fade smoothly
 void confetti() {
     fadeToBlackBy(borderLeds, NUM_BORDER_LEDS, 10);
-    uint8_t pos = random16(NUM_BORDER_LEDS);
+    fadeToBlackBy(allShelves, NUM_SHELF_LEDS, 10);
+    uint8_t pos = random16(NUM_TOTAL_LEDS);
 
     if (frequenciesLeft[0] > 600) {
-        borderLeds[pos] += CHSV(hueCounter + random8(64), 200, 255);
+        if (pos > NUM_BORDER_LEDS) {
+            allShelves[pos%NUM_BORDER_LEDS] += CHSV(hueCounter + random8(64), 200, 255);
+        } else {
+            borderLeds[pos] += CHSV(hueCounter + random8(64), 200, 255);
+        }
     }
 }
 
 // a colored dot sweeping back and forth, with fading trails
 void sinelon() {
-    fadeToBlackBy(borderLeds, NUM_BORDER_LEDS, 20);
-    int pos = beatsin16(13, 0, NUM_BORDER_LEDS);
-    if (frequenciesLeft[3] > 600) {
-        borderLeds[pos] += CHSV(hueCounter, 255, 192);
+    fadeToBlackBy(borderLeds, NUM_BORDER_LEDS, 5);
+    fadeToBlackBy(allShelves, NUM_SHELF_LEDS, 5);
+    int pos = beatsin16(13, 0, NUM_TOTAL_LEDS);
+    if (frequenciesLeft[2] > 600) {
+        if (pos > NUM_BORDER_LEDS) {
+            allShelves[pos%NUM_BORDER_LEDS] += CHSV(hueCounter, 255, 192);
+        } else {
+            borderLeds[pos] += CHSV(hueCounter, 255, 192);
+        }
     }
 }
 
@@ -178,16 +240,16 @@ void juggle() {
 }
 
 void waterfall() {
-    waterfallShelf(topShelfLeds, 6, 500);
-    waterfallShelf(middleShelfLeds, 1, 500);
-    waterfallShelf(bottomShelfLeds, 0, 500);
-    waterfallBorder(4);
+    waterfallShelf(topShelfLeds, 6, clampSensitivity(currentGlobalSensitivity+500));
+    waterfallShelf(middleShelfLeds, 1, clampSensitivity(currentGlobalSensitivity+500));
+    waterfallShelf(bottomShelfLeds, 0, clampSensitivity(currentGlobalSensitivity+500));
+    waterfallBorder(4, clampSensitivity((currentGlobalSensitivity+500)));
 }
 
-void waterfallShelf(CRGB shelf[], int spectrum, int threashold) {
-    if (frequenciesLeft[spectrum] > threashold) {
-        shelf[LEDS_PER_SHELF / 2] = CHSV(map(frequenciesLeft[spectrum], 500, 1023, 0, 255), 200, 255);
-        shelf[LEDS_PER_SHELF / 2 + 1] = CHSV(map(frequenciesLeft[spectrum], 500, 1023, 0, 255), 200, 255);
+void waterfallShelf(CRGB shelf[], int spectrum, int sensitivityThreashold) {
+    if (frequenciesLeft[spectrum] > sensitivityThreashold) {
+        shelf[LEDS_PER_SHELF / 2] = CHSV(map(frequenciesLeft[spectrum], sensitivityThreashold, 1023, 0, 255), 200, 255);
+        shelf[LEDS_PER_SHELF / 2 + 1] = CHSV(map(frequenciesLeft[spectrum], sensitivityThreashold, 1023, 0, 255), 200, 255);
     } else {
         shelf[LEDS_PER_SHELF / 2] = CRGB(0, 0, 0);
         shelf[LEDS_PER_SHELF / 2 + 1] = CRGB(0, 0, 0);
@@ -196,9 +258,9 @@ void waterfallShelf(CRGB shelf[], int spectrum, int threashold) {
     memmove(&shelf[LEDS_PER_SHELF / 2], &shelf[LEDS_PER_SHELF / 2 - 1], LEDS_PER_SHELF / 2 * sizeof(CRGB));
 }
 
-void waterfallBorder(int spectrum) {
-    if (frequenciesRight[1] > 500) {
-        borderLeds[NUM_BORDER_LEDS / 2] = CHSV(map(frequenciesRight[spectrum], 500, 1023, 0, 255), 200, 255);
+void waterfallBorder(int spectrum, int sensitivityThreashold) {
+    if (frequenciesRight[1] > sensitivityThreashold) {
+        borderLeds[NUM_BORDER_LEDS / 2] = CHSV(map(frequenciesRight[spectrum], sensitivityThreashold, 1023, 0, 255), 200, 255);
     } else {
         borderLeds[NUM_BORDER_LEDS / 2] = CRGB(0, 0, 0);
     }
@@ -207,21 +269,21 @@ void waterfallBorder(int spectrum) {
 }
 
 void equalizerLeftToRightBottomToTop() {
-    equalizerLeftBorder(0, 200, false);
-    equalizerRightBorder(6, 200, false);
-    equalizerTopBorder(5, 400, true);
-    equalizerShelf(topShelfLeds, 4, 400, false);
-    equalizerShelf(middleShelfLeds, 3, 400, true);
-    equalizerShelf(bottomShelfLeds, 2, 400, false);
+    equalizerLeftBorder(0, clampSensitivity(currentGlobalSensitivity+200), false);
+    equalizerRightBorder(6, clampSensitivity(currentGlobalSensitivity+200), false);
+    equalizerTopBorder(5, clampSensitivity(currentGlobalSensitivity+400), true);
+    equalizerShelf(topShelfLeds, 4, clampSensitivity(currentGlobalSensitivity+400), false);
+    equalizerShelf(middleShelfLeds, 3, clampSensitivity(currentGlobalSensitivity+400), true);
+    equalizerShelf(bottomShelfLeds, 2, clampSensitivity(currentGlobalSensitivity+400), false);
 }
 
 void equalizerRightToLeftBottomToTop() {
-    equalizerLeftBorder(0, 200, false);
-    equalizerRightBorder(6, 200, false);
-    equalizerTopBorder(5, 400, false);
-    equalizerShelf(topShelfLeds, 4, 400, true);
-    equalizerShelf(middleShelfLeds, 3, 400, false);
-    equalizerShelf(bottomShelfLeds, 2, 400, true);
+    equalizerLeftBorder(0, clampSensitivity(currentGlobalSensitivity+200), false);
+    equalizerRightBorder(6, clampSensitivity(currentGlobalSensitivity+200), false);
+    equalizerTopBorder(5, clampSensitivity(currentGlobalSensitivity+400), false);
+    equalizerShelf(topShelfLeds, 4, clampSensitivity(currentGlobalSensitivity+400), true);
+    equalizerShelf(middleShelfLeds, 3, clampSensitivity(currentGlobalSensitivity+400), false);
+    equalizerShelf(bottomShelfLeds, 2, clampSensitivity(currentGlobalSensitivity+400), true);
 }
 
 void equalizerLeftBorder(int frequencyBin, int sensitivity, bool direction) {
@@ -277,7 +339,6 @@ void equalizerShelf(CRGBSet shelf, int frequencyBin, int sensitivity, bool direc
             shelf(LEDS_PER_SHELF - numberToLight - 1, LEDS_PER_SHELF - 1) = color;
         } else {
             shelf(0, numberToLight) = color;
-
         }
     }
 }
