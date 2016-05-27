@@ -285,16 +285,16 @@ void waterfallBorderCascading(int spectrum, int sensitivityThreashold) {
         borderLeds[NUM_BORDER_LEDS / 2] = CRGB(0, 0, 0);
     }
     if(topShelfLeds[0]){
-        borderLeds[42]+=(topShelfLeds[0]%=128);
+        borderLeds[42]+=topShelfLeds[0];
     }
     if(topShelfLeds[LEDS_PER_SHELF-1]) {
-        borderLeds[104]+=(topShelfLeds[LEDS_PER_SHELF-1]%=128);
+        borderLeds[104]+=topShelfLeds[LEDS_PER_SHELF-1];
     }
     if(middleShelfLeds[0]){
-        borderLeds[21]+=(middleShelfLeds[0]%=128);
+        borderLeds[21]+=middleShelfLeds[0];
     }
     if(middleShelfLeds[LEDS_PER_SHELF-1]) {
-        borderLeds[125]+=(middleShelfLeds[LEDS_PER_SHELF-1]%=128);
+        borderLeds[125]+=middleShelfLeds[LEDS_PER_SHELF-1];
     }
     memmove(&borderLeds[0], &borderLeds[1], NUM_BORDER_LEDS / 2 * sizeof(CRGB));
     memmove(&borderLeds[NUM_BORDER_LEDS / 2], &borderLeds[NUM_BORDER_LEDS / 2 - 1], NUM_BORDER_LEDS / 2 * sizeof(CRGB));
