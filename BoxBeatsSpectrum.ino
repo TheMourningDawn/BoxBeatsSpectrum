@@ -1,12 +1,10 @@
 //TODO:Implement some sort of sensitivity selection mode
 //TODO:Fix all of the modes broken by the change in led strip setup
-#include <FastLED.h>
-#include <Wire.h>
-#include <avr/pgmspace.h>
+#include "FastLED.h"
 #include "ClickEncoder.h"
 #include "TimerOne.h"
 
-FASTLED_USING_NAMESPACE
+FASTLED_USING_NAMESPACE;
 
 #define BORDER_LED_PIN 6
 #define SHELF_LED_PIN 3
@@ -14,22 +12,17 @@ FASTLED_USING_NAMESPACE
 #define RESET_PIN 5
 #define LEFT_EQ_PIN A0
 #define RIGHT_EQ_PIN A1
-
 #define PIN_ENCODER_A 0
 #define PIN_ENCODER_B 1
 #define PIN_ENCODER_SWITCH 10
-
 #define LED_TYPE WS2811
 #define COLOR_ORDER GRB
-
 #define NUM_SHELF_LEDS 60
 #define LEDS_PER_SHELF 20
 #define NUM_BORDER_LEDS 147
 #define NUM_TOTAL_LEDS NUM_BORDER_LEDS + NUM_SHELF_LEDS
-
 #define BRIGHTNESS 120
 #define FRAMES_PER_SECOND 240
-
 #define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
 
 CRGBArray<NUM_BORDER_LEDS> borderLeds;
@@ -44,6 +37,7 @@ CRGBSet bottomShelfLeds(bottomShelfLedArray, LEDS_PER_SHELF);
 
 int frequenciesLeft[7];
 int frequenciesRight[7];
+uint8_t frequencyMode[7] = {0, 1, 2, 3, 4, 5, 6};
 
 int currentGlobalSensitivity = 0;
 ClickEncoder *encoder;
@@ -104,7 +98,9 @@ void checkRotaryEncoderForInput() {
     if (b != ClickEncoder::Open) {
         switch (b) {
             case ClickEncoder::Clicked:
-                currentSelectionMode = wrapToRange(currentSelectionMode + 1, 0, 1);
+                currentSelectionMode = wrapToRange(currentSelectionMode+1, 0, 2);
+                Serial.print("Current Selection Mode: ");
+                Serial.println(currentSelectionMode);
                 break;
             case ClickEncoder::DoubleClicked:
                 encoder->setAccelerationEnabled(!encoder->getAccelerationEnabled());
@@ -126,12 +122,24 @@ void checkRotaryEncoderForInput() {
                 } else {
                     previousPattern();
                 }
+                Serial.print("Current Pattern Mode: ");
+                Serial.println(currentPattern);
             } else if (currentSelectionMode == 1) {
                 if (currentEncoderValue < previousEncoderValue) {
                     currentGlobalSensitivity += 50;
                 } else {
                     currentGlobalSensitivity -= 50;
                 }
+                Serial.print("Current Global Sensitivity: ");
+                Serial.println(currentGlobalSensitivity);
+            } else if (currentSelectionMode == 2) {
+                if (currentEncoderValue < previousEncoderValue) {
+                    nextFrequencyMode();
+                } else {
+                    previousFrequencyMode();
+                }
+                Serial.print("First Frequency Mode: ");
+                Serial.println(frequencyMode[0]);
             }
             previousEncoderValue = currentEncoderValue;
         }
@@ -144,6 +152,22 @@ void nextPattern() {
 
 void previousPattern() {
     currentPattern = (currentPattern - 1) % ARRAY_SIZE(patterns);
+}
+
+void nextFrequencyMode() {
+    int wrapEnd = frequencyMode[6];
+    for(int i=6;i>0;i--) {
+        frequencyMode[i] = frequencyMode[i-1];
+    }
+    frequencyMode[0] = wrapEnd;
+}
+
+void previousFrequencyMode() {
+    int wrapBegining = frequencyMode[0];
+    for(int i=0;i<6;i++) {
+        frequencyMode[i] = frequencyMode[i+1];
+    }
+    frequencyMode[6] = wrapBegining;
 }
 
 int clampToRange(int numberToClamp, int lowerBound, int upperBound) {
@@ -161,9 +185,9 @@ int clampSensitivity(int sensitivity) {
 
 int wrapToRange(int numberToWrap, int lowerBound, int upperBound) {
     if (numberToWrap > upperBound) {
-        return numberToWrap % upperBound;
+        return lowerBound;
     } else if (numberToWrap < lowerBound) {
-        return numberToWrap += upperBound;
+        return upperBound;
     }
     return numberToWrap;
 }
@@ -184,7 +208,7 @@ void readAudioFrequencies() {
 }
 
 void rainbow() {
-    if (frequenciesLeft[2] > 600) {
+    if (frequenciesLeft[frequencyMode[2]] > clampSensitivity(currentGlobalSensitivity + 600)) {
         fill_rainbow(borderLeds, NUM_TOTAL_LEDS, hueCounter, 7);
     }
 }
@@ -195,7 +219,7 @@ void confetti() {
     fadeToBlackBy(allShelves, NUM_SHELF_LEDS, 10);
     uint8_t pos = random16(NUM_TOTAL_LEDS);
 
-    if (frequenciesLeft[0] > 600) {
+    if (frequenciesLeft[frequencyMode[0]] > clampSensitivity(currentGlobalSensitivity + 600)) {
         if (pos > NUM_BORDER_LEDS) {
             allShelves[pos % NUM_BORDER_LEDS] += CHSV(hueCounter + random8(64), 200, 255);
         } else {
@@ -209,7 +233,7 @@ void sinelon() {
     fadeToBlackBy(borderLeds, NUM_BORDER_LEDS, 5);
     fadeToBlackBy(allShelves, NUM_SHELF_LEDS, 5);
     int pos = beatsin16(13, 0, NUM_TOTAL_LEDS);
-    if (frequenciesLeft[2] > 600) {
+    if (frequenciesLeft[frequencyMode[2]] > clampSensitivity(currentGlobalSensitivity + 600)) {
         if (pos > NUM_BORDER_LEDS) {
             allShelves[pos % NUM_BORDER_LEDS] += CHSV(hueCounter, 255, 192);
         } else {
@@ -232,7 +256,7 @@ void bpm() {
 void juggle() {
     fadeToBlackBy(borderLeds, NUM_BORDER_LEDS, 20);
     byte dothue = 0;
-    if (frequenciesLeft[1] > 600) {
+    if (frequenciesLeft[frequencyMode[1]] > clampSensitivity(currentGlobalSensitivity + 600)) {
         for (int i = 0; i < 8; i++) {
             borderLeds[beatsin16(i + 7, 0, NUM_BORDER_LEDS)] |= CHSV(dothue, 200, 255);
             dothue += 32;
@@ -241,17 +265,17 @@ void juggle() {
 }
 
 void waterfall() {
-    waterfallShelf(topShelfLeds, 6, clampSensitivity(currentGlobalSensitivity + 500));
-    waterfallShelf(middleShelfLeds, 1, clampSensitivity(currentGlobalSensitivity + 500));
-    waterfallShelf(bottomShelfLeds, 0, clampSensitivity(currentGlobalSensitivity + 500));
-    waterfallBorder(4, clampSensitivity((currentGlobalSensitivity + 500)));
+    waterfallShelf(topShelfLeds, frequencyMode[6], clampSensitivity(currentGlobalSensitivity + 500));
+    waterfallShelf(middleShelfLeds, frequencyMode[1], clampSensitivity(currentGlobalSensitivity + 500));
+    waterfallShelf(bottomShelfLeds, frequencyMode[0], clampSensitivity(currentGlobalSensitivity + 500));
+    waterfallBorder(frequencyMode[4], clampSensitivity((currentGlobalSensitivity + 500)));
 }
 
 void waterfallCascading() {
-    waterfallBorderCascading(4, clampSensitivity((currentGlobalSensitivity + 500)));
-    waterfallShelf(topShelfLeds, 6, clampSensitivity(currentGlobalSensitivity + 500));
-    waterfallShelf(middleShelfLeds, 1, clampSensitivity(currentGlobalSensitivity + 500));
-    waterfallShelf(bottomShelfLeds, 0, clampSensitivity(currentGlobalSensitivity + 500));
+    waterfallBorderCascading(frequencyMode[4], clampSensitivity((currentGlobalSensitivity + 500)));
+    waterfallShelf(topShelfLeds, frequencyMode[6], clampSensitivity(currentGlobalSensitivity + 500));
+    waterfallShelf(middleShelfLeds, frequencyMode[1], clampSensitivity(currentGlobalSensitivity + 500));
+    waterfallShelf(bottomShelfLeds, frequencyMode[0], clampSensitivity(currentGlobalSensitivity + 500));
 }
 
 void waterfallShelf(CRGB shelf[], int spectrum, int sensitivityThreashold) {
@@ -279,7 +303,7 @@ void waterfallBorder(int spectrum, int sensitivityThreashold) {
 }
 
 void waterfallBorderCascading(int spectrum, int sensitivityThreashold) {
-    if (frequenciesRight[1] > sensitivityThreashold) {
+    if (frequenciesRight[spectrum] > sensitivityThreashold) {
         borderLeds[NUM_BORDER_LEDS / 2] = CHSV(map(frequenciesRight[spectrum], sensitivityThreashold, 1023, 0, 255), 200, 255);
     } else {
         borderLeds[NUM_BORDER_LEDS / 2] = CRGB(0, 0, 0);
@@ -301,21 +325,21 @@ void waterfallBorderCascading(int spectrum, int sensitivityThreashold) {
 }
 
 void equalizerLeftToRightBottomToTop() {
-    equalizerLeftBorder(0, clampSensitivity(currentGlobalSensitivity + 200), false);
-    equalizerRightBorder(6, clampSensitivity(currentGlobalSensitivity + 200), false);
-    equalizerTopBorder(5, clampSensitivity(currentGlobalSensitivity + 400), true);
-    equalizerShelf(topShelfLeds, 4, clampSensitivity(currentGlobalSensitivity + 400), false);
-    equalizerShelf(middleShelfLeds, 3, clampSensitivity(currentGlobalSensitivity + 400), true);
-    equalizerShelf(bottomShelfLeds, 2, clampSensitivity(currentGlobalSensitivity + 400), false);
+    equalizerLeftBorder(frequencyMode[0], clampSensitivity(currentGlobalSensitivity + 200), false);
+    equalizerRightBorder(frequencyMode[6], clampSensitivity(currentGlobalSensitivity + 200), false);
+    equalizerTopBorder(frequencyMode[5], clampSensitivity(currentGlobalSensitivity + 400), true);
+    equalizerShelf(topShelfLeds, frequencyMode[4], clampSensitivity(currentGlobalSensitivity + 400), false);
+    equalizerShelf(middleShelfLeds, frequencyMode[3], clampSensitivity(currentGlobalSensitivity + 400), true);
+    equalizerShelf(bottomShelfLeds, frequencyMode[2], clampSensitivity(currentGlobalSensitivity + 400), false);
 }
 
 void equalizerRightToLeftBottomToTop() {
-    equalizerLeftBorder(0, clampSensitivity(currentGlobalSensitivity + 200), false);
-    equalizerRightBorder(6, clampSensitivity(currentGlobalSensitivity + 200), false);
-    equalizerTopBorder(5, clampSensitivity(currentGlobalSensitivity + 400), false);
-    equalizerShelf(topShelfLeds, 4, clampSensitivity(currentGlobalSensitivity + 400), true);
-    equalizerShelf(middleShelfLeds, 3, clampSensitivity(currentGlobalSensitivity + 400), false);
-    equalizerShelf(bottomShelfLeds, 2, clampSensitivity(currentGlobalSensitivity + 400), true);
+    equalizerLeftBorder(frequencyMode[0], clampSensitivity(currentGlobalSensitivity + 200), false);
+    equalizerRightBorder(frequencyMode[6], clampSensitivity(currentGlobalSensitivity + 200), false);
+    equalizerTopBorder(frequencyMode[5], clampSensitivity(currentGlobalSensitivity + 400), false);
+    equalizerShelf(topShelfLeds, frequencyMode[4], clampSensitivity(currentGlobalSensitivity + 400), true);
+    equalizerShelf(middleShelfLeds, frequencyMode[3], clampSensitivity(currentGlobalSensitivity + 400), false);
+    equalizerShelf(bottomShelfLeds, frequencyMode[2], clampSensitivity(currentGlobalSensitivity + 400), true);
 }
 
 void equalizerLeftBorder(int frequencyBin, int sensitivity, bool direction) {
@@ -374,7 +398,3 @@ void equalizerShelf(CRGBSet shelf, int frequencyBin, int sensitivity, bool direc
         }
     }
 }
-
-
-
-
